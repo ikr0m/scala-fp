@@ -3,9 +3,12 @@ package fp.kats
 import cats.free.Free
 import cats.free.Free.liftF
 import cats.arrow.FunctionK
-import cats.{Id, ~>}
+import cats.{Id, InjectK, ~>}
 import scala.collection.mutable
 import cats.data.State
+import cats.data.EitherK
+
+// https://typelevel.org/cats/datatypes/freemonad.html
 
 object FreeMonadApp extends App {
 
@@ -89,6 +92,30 @@ object FreeMonadApp extends App {
 
   val result2: (Map[String, Any], Option[Int]) = program.foldMap(pureCompiler).run(Map.empty).value
   println(s"Result2: $result2")
+
+  // Composing Free monads ADTs.
+
+  // Handles user interaction
+  sealed trait Interact[A]
+  case class Ask(prompt: String) extends Interact[String]
+  case class Tell(msg: String) extends Interact[Unit]
+
+  // Represents presistence operations
+  sealed trait DataOp[A]
+  case class AddCat(a: String) extends DataOp[Unit]
+  case class GetAllCats() extends DataOp[List[String]]
+
+  type CatsApp[A] = EitherK[DataOp, Interact, A]
+
+  class Interacts[F[_]](implicit I: InjectK[Interact, F]) {
+    def tell(msg: String): Free[F, Unit] = Free.inject[Interact, F](Tell(msg))
+    def ask(prompt: String): Free[F, String] = Free.inject[Interact, F](Ask(prompt))
+  }
+
+  object Interacts {
+    implicit def interacts[F[_]](implicit I: InjectK[Interact, F]): Interacts[F] = new Interacts[F]
+
+  }
 
 }
 
