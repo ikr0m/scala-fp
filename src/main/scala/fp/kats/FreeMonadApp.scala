@@ -1,12 +1,13 @@
 package fp.kats
 
+import cats.data.{EitherK, State}
 import cats.free.Free
 import cats.free.Free.liftF
-import cats.arrow.FunctionK
 import cats.{Id, InjectK, ~>}
+
 import scala.collection.mutable
-import cats.data.State
-import cats.data.EitherK
+import scala.collection.mutable.ListBuffer
+import scala.language.higherKinds
 
 // https://typelevel.org/cats/datatypes/freemonad.html
 
@@ -93,6 +94,8 @@ object FreeMonadApp extends App {
   val result2: (Map[String, Any], Option[Int]) = program.foldMap(pureCompiler).run(Map.empty).value
   println(s"Result2: $result2")
 
+  println("---------------------------------------------")
+
   // Composing Free monads ADTs.
 
   // Handles user interaction
@@ -100,7 +103,7 @@ object FreeMonadApp extends App {
   case class Ask(prompt: String) extends Interact[String]
   case class Tell(msg: String) extends Interact[Unit]
 
-  // Represents presistence operations
+  // Represents persistence operations
   sealed trait DataOp[A]
   case class AddCat(a: String) extends DataOp[Unit]
   case class GetAllCats() extends DataOp[List[String]]
@@ -114,8 +117,164 @@ object FreeMonadApp extends App {
 
   object Interacts {
     implicit def interacts[F[_]](implicit I: InjectK[Interact, F]): Interacts[F] = new Interacts[F]
-
   }
 
-}
+  class DataSource[F[_]](implicit I: InjectK[DataOp, F]) {
+    def addCat(a: String): Free[F, Unit] = Free.inject[DataOp, F](AddCat(a))
+    def getAllCats: Free[F, List[String]] = Free.inject[DataOp, F](GetAllCats())
+  }
 
+  object DataSource {
+    implicit def dataSource[F[_]](implicit I: InjectK[DataOp, F]): DataSource[F] = new DataSource[F]
+  }
+
+  def program2(implicit I: Interacts[CatsApp], D: DataSource[CatsApp]): Free[CatsApp, Unit] = {
+    import D._
+    import I._
+
+    for {
+      cat   <- ask("What's the kitty's name?")
+      _     <- addCat(cat)
+      cats  <- getAllCats
+      _     <- tell(cats.toString)
+    } yield ()
+  }
+
+  object ConsoleCatsInterpreter extends (Interact ~> Id) {
+    def apply[A](i: Interact[A]) = i match {
+      case Ask(prompt) =>
+        println(prompt)
+        readLine()
+      case Tell(msg) =>
+        println(msg)
+    }
+  }
+
+  object InMemoryDatasourceInterpreter extends (DataOp ~> Id) {
+    private[this] val memDataSet = new ListBuffer[String]
+
+    def apply[A](fa: DataOp[A]) = fa match {
+      case AddCat(a) =>
+        memDataSet.append(a)
+        ()
+      case GetAllCats() => memDataSet.toList
+    }
+  }
+
+  val interpreter: CatsApp ~> Id = InMemoryDatasourceInterpreter or ConsoleCatsInterpreter
+
+  val evaled: Unit = program2.foldMap(interpreter)
+
+  println("---------------------------------------------")
+
+  // FreeT
+  import cats.free._
+  import cats._
+  import cats.data._
+
+  sealed abstract class Teletype[A] extends Product with Serializable
+
+  final case class WriteLine(line: String) extends Teletype[Unit]
+  final case class ReadLine(prompt: String) extends Teletype[String]
+
+  type TeletypeT[M[_], A] = FreeT[Teletype, M, A]
+
+  type Log = List[String]
+
+  type TeletypeState[A] = State[List[String], A]
+
+  object TeletypeOps {
+    def writeLine(line: String): TeletypeT[TeletypeState, Unit] =
+      FreeT.liftF[Teletype, TeletypeState, Unit](WriteLine(line))
+
+    def readLine(prompt: String): TeletypeT[TeletypeState, String] =
+      FreeT.liftF[Teletype, TeletypeState, String](ReadLine(prompt))
+
+    def log(s: String): TeletypeT[TeletypeState, Unit] =
+      FreeT.liftT[Teletype, TeletypeState, Unit](State.modify(s :: _))
+  }
+
+  def program3: TeletypeT[TeletypeState, Unit] = {
+    for {
+      userSaid <- TeletypeOps.readLine("what's up?")
+      _ <- TeletypeOps.log(s"user said: $userSaid")
+      _ <- TeletypeOps.writeLine("thanks, see u soon!")
+    } yield ()
+  }
+
+  def interpreter2 = new (Teletype ~> TeletypeState) {
+    def apply[A](fa: Teletype[A]): TeletypeState[A] = {
+      fa match {
+        case ReadLine(prompt) =>
+          println(prompt)
+          val userInput = "hanging in here"
+          StateT.pure[Eval, List[String], A](userInput)
+        case WriteLine(line) =>
+          StateT.pure[Eval, List[String], A](println(line))
+      }
+    }
+  }
+
+  import TeletypeOps._
+
+  val state = program3.foldMap(interpreter2)
+  val initialState = Nil
+  val (stored, _) = state.run(initialState).value
+
+  println(s"stored: $stored")
+
+  println("---------------------------------------------")
+
+  import cats.implicits._
+  import scala.util.Try
+
+  sealed trait Ctx[A]
+
+  case class Action(value: Int) extends Ctx[Int]
+
+  def op1: FreeT[Ctx, Option, Int] =
+    FreeT.liftF[Ctx, Option, Int](Action(7))
+
+  def op2: FreeT[Ctx, Option, Int] =
+    FreeT.liftT[Ctx, Option, Int](Some(4))
+
+  def op3: FreeT[Ctx, Option, Int] =
+    FreeT.pure[Ctx, Option, Int](1)
+
+  val opComplete: FreeT[Ctx, Option, Int] =
+    for {
+      a <- op1
+      b <- op2
+      c <- op3
+    } yield a + b + c
+
+  // Interpreters
+
+  type OptTry[A] = OptionT[Try, A]
+
+  def tryInterpreter: Ctx ~> OptTry = new (Ctx ~> OptTry) {
+    def apply[A](fa: Ctx[A]): OptTry[A] = {
+      fa match {
+        case Action(value) =>
+          OptionT.liftF(Try(value))
+      }
+    }
+  }
+
+  def optTryLift: Option ~> OptTry = new (Option ~> OptTry) {
+    def apply[A](fa: Option[A]): OptTry[A] = {
+      fa match {
+        case Some(value) =>
+          OptionT(Try(Option(value)))
+        case None =>
+          OptionT.none
+      }
+    }
+  }
+
+  val hoisted = opComplete.hoist(optTryLift)
+  val evaluated = hoisted.foldMap(tryInterpreter)
+  val result4 = evaluated.value
+
+  println(s"result4: $result4")
+}
