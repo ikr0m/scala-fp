@@ -12,7 +12,8 @@ val simulacrumVersion = "0.18.0"
 libraryDependencies ++= Seq(
   "org.typelevel" %% "cats-core" % catsVersion,
   "org.typelevel" %% "cats-free" % catsVersion,
-  "com.github.mpilquist" %% "simulacrum" % simulacrumVersion
+  "com.github.mpilquist" %% "simulacrum" % simulacrumVersion,
+  "io.monix" %% "monix" % "3.0.0-RC3",
 )
 
 addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
