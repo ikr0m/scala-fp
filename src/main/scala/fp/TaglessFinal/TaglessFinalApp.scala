@@ -1,6 +1,7 @@
 package fp.TaglessFinal
 
 import cats.Monad
+import monix.eval.Task
 
 import scala.io.StdIn
 
