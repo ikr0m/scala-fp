@@ -1,4 +1,4 @@
-package fp.TaglessFinal
+package fp.taglessfinal
 
 import cats.Monad
 import monix.eval.Task
