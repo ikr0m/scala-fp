@@ -14,6 +14,7 @@ libraryDependencies ++= Seq(
   "org.typelevel" %% "cats-free" % catsVersion,
   "com.github.mpilquist" %% "simulacrum" % simulacrumVersion,
   "io.monix" %% "monix" % "3.0.0-RC3",
+  "co.fs2" %% "fs2-core" % "1.0.5",
 )
 
 addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
